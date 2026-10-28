@@ -21,11 +21,12 @@ st.markdown("Panel analityczny z automatyczną synchronizacją z Withings i AI."
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
+    # Tworzymy tabelę z unikalnym kluczem po dacie (minucie), co pozwala łączyć wagę i skład ciała z osobnych grup API
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS measurements (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp INTEGER UNIQUE,
-            date TEXT,
+            timestamp INTEGER,
+            date TEXT UNIQUE,
             weight REAL,
             fat_mass REAL,
             muscle_mass REAL,
@@ -76,9 +77,9 @@ def fetch_withings_data():
         
         if data.get("status") == 0:
             measuregrps = data.get("body", {}).get("measuregrps", [])
-            conn = sqlite3.connect(DB_FILE)
-            cursor = conn.cursor()
-            updated_count = 0
+            
+            # Krok 1: Agregujemy dane ze wszystkich grup Withings do słownika kluczowanego po minucie (date_str)
+            sessions = {}
             
             for group in measuregrps:
                 ts = group.get("date")
@@ -86,49 +87,52 @@ def fetch_withings_data():
                 dt_local = dt_utc.tz_convert('Europe/Warsaw')
                 date_str = dt_local.strftime('%Y-%m-%d %H:%M')
                 
-                weight = None
-                fat_mass = None
-                muscle_mass = None
-                hydration = None
+                if date_str not in sessions:
+                    sessions[date_str] = {
+                        "timestamp": ts,
+                        "weight": None,
+                        "fat_mass": None,
+                        "muscle_mass": None,
+                        "hydration": None
+                    }
                 
                 for meas in group.get("measures", []):
                     val = meas.get("value") * (10 ** meas.get("unit"))
                     m_type = meas.get("type")
                     
-                    # Rozszerzone mapowanie typów Withings API
                     if m_type == 1:
-                        weight = round(val, 2)
-                    elif m_type in [6, 8]:  # 6: Masa tłuszczowa / 8: woda (w niektórych wersjach)
-                        if m_type == 6:
-                            fat_mass = round(val, 2)
-                    elif m_type == 76 or m_type == 88 or m_type == 7: 
-                        muscle_mass = round(val, 2)
-                    elif m_type == 8 or m_type == 77:
-                        hydration = round(val, 2)
-                    elif m_type == 5:
-                        # Masa beztłuszczowa lub alternatywny tłuszcz
-                        pass
-                
-                if weight is not None:
-                    cursor.execute("SELECT id, fat_mass, muscle_mass, hydration FROM measurements WHERE timestamp = ?", (ts,))
-                    row = cursor.fetchone()
-                    
-                    if row is None:
-                        cursor.execute('''
-                            INSERT INTO measurements (timestamp, date, weight, fat_mass, muscle_mass, hydration)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        ''', (ts, date_str, weight, fat_mass, muscle_mass, hydration))
-                        updated_count += 1
-                    else:
-                        cursor.execute('''
-                            UPDATE measurements 
-                            SET weight = ?,
-                                fat_mass = COALESCE(?, fat_mass),
-                                muscle_mass = COALESCE(?, muscle_mass),
-                                hydration = COALESCE(?, hydration)
-                            WHERE timestamp = ?
-                        ''', (weight, fat_mass, muscle_mass, hydration, ts))
-                        updated_count += 1
+                        sessions[date_str]["weight"] = round(val, 2)
+                    elif m_type == 6:
+                        sessions[date_str]["fat_mass"] = round(val, 2)
+                    elif m_type in [76, 88]:
+                        sessions[date_str]["muscle_mass"] = round(val, 2)
+                    elif m_type == 8:
+                        sessions[date_str]["hydration"] = round(val, 2)
+
+            # Krok 2: Zapisujemy / aktualizujemy dane w bazie SQLite
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            updated_count = 0
+            
+            for date_str, metrics in sessions.items():
+                if metrics["weight"] is not None:
+                    cursor.execute('''
+                        INSERT INTO measurements (timestamp, date, weight, fat_mass, muscle_mass, hydration)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(date) DO UPDATE SET
+                            weight = COALESCE(excluded.weight, weight),
+                            fat_mass = COALESCE(excluded.fat_mass, fat_mass),
+                            muscle_mass = COALESCE(excluded.muscle_mass, muscle_mass),
+                            hydration = COALESCE(excluded.hydration, hydration)
+                    ''', (
+                        metrics["timestamp"], 
+                        date_str, 
+                        metrics["weight"], 
+                        metrics["fat_mass"], 
+                        metrics["muscle_mass"], 
+                        metrics["hydration"]
+                    ))
+                    updated_count += 1
                         
             conn.commit()
             conn.close()
@@ -139,13 +143,13 @@ def fetch_withings_data():
 
 # Przycisk synchronizacji w interfejsie
 if st.button("🔄 Synchronizuj dane z Withings"):
-    with st.spinner("Pobieram najnowsze pomiary i skład ciała..."):
+    with st.spinner("Pobieram i scalam pełną historię składu ciała z Withings..."):
         count = fetch_withings_data()
         if count > 0:
-            st.success(f"Pomyślnie zsynchronizowano i zaktualizowano wpisy: {count}")
+            st.success(f"Pomyślnie zsynchronizowano i scalono wpisy: {count}")
             st.rerun()
         else:
-            st.info("Brak nowych danych do zsynchronizowania.")
+            st.info("Brak danych do zsynchronizowania.")
 
 def load_data():
     if not os.path.exists(DB_FILE):
@@ -157,7 +161,6 @@ def load_data():
         dt_utc = pd.to_datetime(df['timestamp'], unit='s', utc=True)
         dt_local = dt_utc.dt.tz_convert('Europe/Warsaw')
         df['datetime'] = dt_local
-        df['date'] = dt_local.dt.strftime('%Y-%m-%d %H:%M')
         
         df['weight'] = df['weight'].round(2)
         if 'fat_mass' in df.columns:
@@ -203,7 +206,7 @@ else:
         else:
             with st.spinner("Gemini analizuje dane..."):
                 history_text = "\n".join([f"Data: {r['date']} | Waga: {r['weight']:.2f} kg | Tłuszcz: {r.get('fat_mass', '-')} kg | Mięśnie: {r.get('muscle_mass', '-')} kg" for _, r in df.tail(14).iterrows()])
-                prompt = f"Oceń surowe dane pomiarowe z ostatnich 2 tygodni, uwzględniając skład ciała, odrzuć szumy i wskaż twardy trend:\n{history_text}"
+                prompt = f"Oceń surowe dane pomiarowe z ostatnich 2 tygodni, uwzględniając pełny skład ciała, odrzuć szumy i wskaż twardy trend:\n{history_text}"
                 
                 gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
                 res = requests.post(gemini_url, headers={"Content-Type": "application/json"}, json={"contents": [{"parts": [{"text": prompt}]}]})
@@ -223,25 +226,3 @@ else:
             'muscle_mass': lambda x: f"{x:.2f}" if pd.notna(x) else '-',
             'hydration': lambda x: f"{x:.2f}" if pd.notna(x) else '-'
         }), use_container_width=True)
-
-    # --- PANEL DIAGNOSTYCZNY API ---
-    with st.expander("🔍 Diagnostyka: Analiza typów pomiarów z Withings"):
-        if st.button("Pokaż typy (m_type) z ostatniego pomiaru"):
-            access_token = get_withings_access_token()
-            if access_token:
-                debug_res = requests.post("https://wbsapi.withings.net/measure", data={"action": "getmeas", "access_token": access_token})
-                res_json = debug_res.json()
-                if res_json.get("status") == 0:
-                    grps = res_json.get("body", {}).get("measuregrps", [])
-                    if grps:
-                        latest_grp = grps[-1]
-                        st.write("Wszystkie metryki w najnowszym wpisie pomiarowym:")
-                        parsed_measures = []
-                        for m in latest_grp.get("measures", []):
-                            val = m.get("value") * (10 ** m.get("unit"))
-                            parsed_measures.append({"type": m.get("type"), "value": val})
-                        st.json(parsed_measures)
-                    else:
-                        st.warning("Brak grup pomiarowych.")
-                else:
-                    st.error(f"Błąd API: {res_json}")
