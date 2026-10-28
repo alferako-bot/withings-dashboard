@@ -136,11 +136,11 @@ def load_data():
     df = pd.read_sql_query("SELECT timestamp, date, weight, fat_mass, muscle_mass, hydration FROM measurements ORDER BY timestamp ASC", conn)
     conn.close()
     if not df.empty:
-        # Zawsze przeliczamy na podstawie timestamp, aby zagwarantować poprawną strefę i format dla starych i nowych wpisów
+        # Poprawiono użycie akcesora .dt dla obiektów typu Series w Pandas
         dt_utc = pd.to_datetime(df['timestamp'], unit='s', utc=True)
-        dt_local = dt_utc.tz_convert('Europe/Warsaw')
+        dt_local = dt_utc.dt.tz_convert('Europe/Warsaw')
         df['datetime'] = dt_local
-        df['date'] = dt_local.strftime('%Y-%m-%d %H:%M')
+        df['date'] = dt_local.dt.strftime('%Y-%m-%d %H:%M')
     return df
 
 df = load_data()
