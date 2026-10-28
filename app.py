@@ -21,7 +21,6 @@ st.markdown("Panel analityczny z automatyczną synchronizacją z Withings i AI."
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    # Tworzymy tabelę z unikalnym kluczem po dacie (minucie), co pozwala łączyć wagę i skład ciała z osobnych grup API
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS measurements (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,8 +76,6 @@ def fetch_withings_data():
         
         if data.get("status") == 0:
             measuregrps = data.get("body", {}).get("measuregrps", [])
-            
-            # Krok 1: Agregujemy dane ze wszystkich grup Withings do słownika kluczowanego po minucie (date_str)
             sessions = {}
             
             for group in measuregrps:
@@ -109,7 +106,6 @@ def fetch_withings_data():
                     elif m_type == 8:
                         sessions[date_str]["hydration"] = round(val, 2)
 
-            # Krok 2: Zapisujemy / aktualizujemy dane w bazie SQLite
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
             updated_count = 0
@@ -141,15 +137,26 @@ def fetch_withings_data():
         st.error(f"Błąd podczas pobierania pomiarów: {e}")
     return 0
 
-# Przycisk synchronizacji w interfejsie
-if st.button("🔄 Synchronizuj dane z Withings"):
-    with st.spinner("Pobieram i scalam pełną historię składu ciała z Withings..."):
-        count = fetch_withings_data()
-        if count > 0:
-            st.success(f"Pomyślnie zsynchronizowano i scalono wpisy: {count}")
+# Panel sterowania w interfejsie
+col_btn1, col_btn2 = st.columns(2)
+with col_btn1:
+    if st.button("🔄 Synchronizuj dane z Withings"):
+        with st.spinner("Pobieram i scalam pełną historię składu ciała z Withings..."):
+            count = fetch_withings_data()
+            if count > 0:
+                st.success(f"Pomyślnie zsynchronizowano i scalono wpisy: {count}")
+                st.rerun()
+            else:
+                st.info("Brak danych do zsynchronizowania.")
+
+with col_btn2:
+    if st.button("🗑️ Resetuj i wyczyść bazę"):
+        if os.path.exists(DB_FILE):
+            os.remove(DB_FILE)
+            st.success("Baza danych została wyczyszczona!")
             st.rerun()
         else:
-            st.info("Brak danych do zsynchronizowania.")
+            st.info("Baza danych nie istnieje.")
 
 def load_data():
     if not os.path.exists(DB_FILE):
@@ -175,17 +182,7 @@ def load_data():
 df = load_data()
 
 if df.empty:
-    st.info("Brak pomiarów w bazie. Kliknij powyższy przycisk synchronizacji lub dodaj testowy pomiar.")
-    if st.button("Dodaj testowy pomiar"):
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        now = int(time.time())
-        dt_local = pd.to_datetime(now, unit='s', utc=True).tz_convert('Europe/Warsaw')
-        test_date_str = dt_local.strftime('%Y-%m-%d %H:%M')
-        cursor.execute("INSERT OR IGNORE INTO measurements (timestamp, date, weight, fat_mass, muscle_mass, hydration) VALUES (?, ?, ?, ?, ?, ?)", (now, test_date_str, 74.50, 18.20, 35.50, 55.00))
-        conn.commit()
-        conn.close()
-        st.rerun()
+    st.info("Brak pomiarów w bazie. Kliknij przycisk synchronizacji powyżej.")
 else:
     st.subheader("📈 Trendy wagi i składu ciała")
     chart_data = df.set_index('date')[['weight']]
