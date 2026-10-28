@@ -139,7 +139,6 @@ def fetch_withings_data():
             for date_str, metrics in sessions.items():
                 w = metrics["weight"]
                 if w is not None:
-                    # Automatyczne uzupełnienie brakujących procentów, jeśli mamy wartości w kg
                     if metrics["fat_mass"] and not metrics["fat_ratio"]:
                         metrics["fat_ratio"] = round((metrics["fat_mass"] / w) * 100, 1)
                     if metrics["bone_mass"] and not metrics["bone_ratio"]:
@@ -216,13 +215,13 @@ def load_data():
         dt_local = dt_utc.dt.tz_convert('Europe/Warsaw')
         df['datetime'] = dt_local
         
-        # Zaokrąglenia
+        # Bezpieczne zaokrąglanie z rzutowaniem na typ numeryczny
         for col in ['weight', 'fat_mass', 'visceral_fat', 'muscle_mass', 'hydration', 'bone_mass', 'fat_free_mass']:
             if col in df.columns:
-                df[col] = df[col].round(2)
+                df[col] = pd.to_numeric(df[col], errors='coerce').round(2)
         for col in ['fat_ratio', 'muscle_ratio', 'hydration_ratio', 'bone_ratio', 'fat_free_ratio']:
             if col in df.columns:
-                df[col] = df[col].round(1)
+                df[col] = pd.to_numeric(df[col], errors='coerce').round(1)
             
     return df
 
@@ -259,7 +258,7 @@ else:
         chart_data = df.set_index('date')[selected_metrics]
         st.line_chart(chart_data)
     else:
-        st.warning("Wybierz przynajmniej jedną serię danych do wykresu.")
+        st.warning("Wybierz przynajmniej jedną serię danych do wykresów.")
     
     latest = df.iloc[-1]
     col1, col2, col3, col4 = st.columns(4)
