@@ -65,7 +65,7 @@ def fetch_withings_data():
         st.warning("Nie udało się uzyskać dostępu do API Withings (sprawdź tokeny w Secrets).")
         return 0
 
-    url = "https://wapi.withings.com/measure"
+    url = "https://wbsapi.withings.net/measure"
     payload = {
         "action": "getmeas",
         "access_token": access_token,
