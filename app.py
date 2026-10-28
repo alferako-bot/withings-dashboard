@@ -29,7 +29,8 @@ def init_db():
             weight REAL,
             fat_mass REAL,
             muscle_mass REAL,
-            hydration REAL
+            hydration REAL,
+            bone_mass REAL
         )
     ''')
     conn.commit()
@@ -90,7 +91,8 @@ def fetch_withings_data():
                         "weight": None,
                         "fat_mass": None,
                         "muscle_mass": None,
-                        "hydration": None
+                        "hydration": None,
+                        "bone_mass": None
                     }
                 
                 for meas in group.get("measures", []):
@@ -105,6 +107,8 @@ def fetch_withings_data():
                         sessions[date_str]["muscle_mass"] = round(val, 2)
                     elif m_type == 8:
                         sessions[date_str]["hydration"] = round(val, 2)
+                    elif m_type == 5:
+                        sessions[date_str]["bone_mass"] = round(val, 2)
 
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
@@ -113,20 +117,22 @@ def fetch_withings_data():
             for date_str, metrics in sessions.items():
                 if metrics["weight"] is not None:
                     cursor.execute('''
-                        INSERT INTO measurements (timestamp, date, weight, fat_mass, muscle_mass, hydration)
-                        VALUES (?, ?, ?, ?, ?, ?)
+                        INSERT INTO measurements (timestamp, date, weight, fat_mass, muscle_mass, hydration, bone_mass)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(date) DO UPDATE SET
                             weight = COALESCE(excluded.weight, weight),
                             fat_mass = COALESCE(excluded.fat_mass, fat_mass),
                             muscle_mass = COALESCE(excluded.muscle_mass, muscle_mass),
-                            hydration = COALESCE(excluded.hydration, hydration)
+                            hydration = COALESCE(excluded.hydration, hydration),
+                            bone_mass = COALESCE(excluded.bone_mass, bone_mass)
                     ''', (
                         metrics["timestamp"], 
                         date_str, 
                         metrics["weight"], 
                         metrics["fat_mass"], 
                         metrics["muscle_mass"], 
-                        metrics["hydration"]
+                        metrics["hydration"],
+                        metrics["bone_mass"]
                     ))
                     updated_count += 1
                         
@@ -162,7 +168,7 @@ def load_data():
     if not os.path.exists(DB_FILE):
         return pd.DataFrame()
     conn = sqlite3.connect(DB_FILE)
-    df = pd.read_sql_query("SELECT timestamp, date, weight, fat_mass, muscle_mass, hydration FROM measurements ORDER BY timestamp ASC", conn)
+    df = pd.read_sql_query("SELECT timestamp, date, weight, fat_mass, muscle_mass, hydration, bone_mass FROM measurements ORDER BY timestamp ASC", conn)
     conn.close()
     if not df.empty:
         dt_utc = pd.to_datetime(df['timestamp'], unit='s', utc=True)
@@ -170,12 +176,9 @@ def load_data():
         df['datetime'] = dt_local
         
         df['weight'] = df['weight'].round(2)
-        if 'fat_mass' in df.columns:
-            df['fat_mass'] = df['fat_mass'].round(2)
-        if 'muscle_mass' in df.columns:
-            df['muscle_mass'] = df['muscle_mass'].round(2)
-        if 'hydration' in df.columns:
-            df['hydration'] = df['hydration'].round(2)
+        for col in ['fat_mass', 'muscle_mass', 'hydration', 'bone_mass']:
+            if col in df.columns:
+                df[col] = df[col].round(2)
             
     return df
 
@@ -185,14 +188,35 @@ if df.empty:
     st.info("Brak pomiarów w bazie. Kliknij przycisk synchronizacji powyżej.")
 else:
     st.subheader("📈 Trendy wagi i składu ciała")
-    chart_data = df.set_index('date')[['weight']]
-    st.line_chart(chart_data)
+    
+    # Wybór serii danych do wykresu
+    metric_labels = {
+        'weight': 'Waga (kg)',
+        'fat_mass': 'Masa tłuszczowa (kg)',
+        'muscle_mass': 'Masa mięśniowa (kg)',
+        'hydration': 'Hydratacja / Woda',
+        'bone_mass': 'Masa kości (kg)'
+    }
+    
+    selected_metrics = st.multiselect(
+        "Wybierz metryki do wyświetlenia na wykresie:",
+        options=list(metric_labels.keys()),
+        default=['weight'],
+        format_func=lambda x: metric_labels[x]
+    )
+    
+    if selected_metrics:
+        chart_data = df.set_index('date')[selected_metrics]
+        st.line_chart(chart_data)
+    else:
+        st.warning("Wybierz przynajmniej jedną metrykę do wyświetlenia na wykresie.")
     
     latest = df.iloc[-1]
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("Ostatnia waga", f"{latest['weight']:.2f} kg")
     col2.metric("Masa tłuszczowa", f"{latest['fat_mass']:.2f} kg" if pd.notna(latest['fat_mass']) else "- kg")
     col3.metric("Masa mięśniowa", f"{latest['muscle_mass']:.2f} kg" if pd.notna(latest['muscle_mass']) else "- kg")
+    col4.metric("Masa kości", f"{latest['bone_mass']:.2f} kg" if pd.notna(latest.get('bone_mass')) else "- kg")
 
     st.markdown("---")
     st.subheader("🤖 Analiza ekspercka AI (Gemini)")
@@ -202,7 +226,7 @@ else:
             st.error("Brak skonfigurowanego klucza GEMINI_API_KEY w Secrets Streamlit.")
         else:
             with st.spinner("Gemini analizuje dane..."):
-                history_text = "\n".join([f"Data: {r['date']} | Waga: {r['weight']:.2f} kg | Tłuszcz: {r.get('fat_mass', '-')} kg | Mięśnie: {r.get('muscle_mass', '-')} kg" for _, r in df.tail(14).iterrows()])
+                history_text = "\n".join([f"Data: {r['date']} | Waga: {r['weight']:.2f} kg | Tłuszcz: {r.get('fat_mass', '-')} kg | Mięśnie: {r.get('muscle_mass', '-')} kg | Kości: {r.get('bone_mass', '-')} kg" for _, r in df.tail(14).iterrows()])
                 prompt = f"Oceń surowe dane pomiarowe z ostatnich 2 tygodni, uwzględniając pełny skład ciała, odrzuć szumy i wskaż twardy trend:\n{history_text}"
                 
                 gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
@@ -216,10 +240,11 @@ else:
                     st.error(f"Błąd API Gemini: {res.text}")
 
     with st.expander("Pełna historia pomiarów"):
-        history_table = df.sort_values(by='date', ascending=False)[['date', 'weight', 'fat_mass', 'muscle_mass', 'hydration']]
+        history_table = df.sort_values(by='date', ascending=False)[['date', 'weight', 'fat_mass', 'muscle_mass', 'hydration', 'bone_mass']]
         st.dataframe(history_table.style.format({
             'weight': '{:.2f}',
             'fat_mass': lambda x: f"{x:.2f}" if pd.notna(x) else '-',
             'muscle_mass': lambda x: f"{x:.2f}" if pd.notna(x) else '-',
-            'hydration': lambda x: f"{x:.2f}" if pd.notna(x) else '-'
+            'hydration': lambda x: f"{x:.2f}" if pd.notna(x) else '-',
+            'bone_mass': lambda x: f"{x:.2f}" if pd.notna(x) else '-'
         }), use_container_width=True)
