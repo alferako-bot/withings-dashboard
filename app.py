@@ -179,6 +179,12 @@ def load_data():
         for col in ['fat_mass', 'muscle_mass', 'hydration', 'bone_mass']:
             if col in df.columns:
                 df[col] = df[col].round(2)
+        
+        # Wyliczanie procentów względem wagi
+        df['fat_mass_pct'] = (df['fat_mass'] / df['weight'] * 100).round(1)
+        df['muscle_mass_pct'] = (df['muscle_mass'] / df['weight'] * 100).round(1)
+        df['hydration_pct'] = (df['hydration'] / df['weight'] * 100).round(1)
+        df['bone_mass_pct'] = (df['bone_mass'] / df['weight'] * 100).round(1)
             
     return df
 
@@ -189,17 +195,20 @@ if df.empty:
 else:
     st.subheader("📈 Trendy wagi i składu ciała")
     
-    # Wybór serii danych do wykresu
     metric_labels = {
         'weight': 'Waga (kg)',
         'fat_mass': 'Masa tłuszczowa (kg)',
+        'fat_mass_pct': 'Masa tłuszczowa (%)',
         'muscle_mass': 'Masa mięśniowa (kg)',
-        'hydration': 'Hydratacja / Woda',
-        'bone_mass': 'Masa kości (kg)'
+        'muscle_mass_pct': 'Masa mięśniowa (%)',
+        'hydration': 'Hydratacja (kg)',
+        'hydration_pct': 'Hydratacja (%)',
+        'bone_mass': 'Masa kości (kg)',
+        'bone_mass_pct': 'Masa kości (%)'
     }
     
     selected_metrics = st.multiselect(
-        "Wybierz metryki do wyświetlenia na wykresie:",
+        "Wybierz serie danych do wyświetlenia na wykresie:",
         options=list(metric_labels.keys()),
         default=['weight'],
         format_func=lambda x: metric_labels[x]
@@ -209,14 +218,14 @@ else:
         chart_data = df.set_index('date')[selected_metrics]
         st.line_chart(chart_data)
     else:
-        st.warning("Wybierz przynajmniej jedną metrykę do wyświetlenia na wykresie.")
+        st.warning("Wybierz przynajmniej jedną serię danych do wykresu.")
     
     latest = df.iloc[-1]
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Ostatnia waga", f"{latest['weight']:.2f} kg")
-    col2.metric("Masa tłuszczowa", f"{latest['fat_mass']:.2f} kg" if pd.notna(latest['fat_mass']) else "- kg")
-    col3.metric("Masa mięśniowa", f"{latest['muscle_mass']:.2f} kg" if pd.notna(latest['muscle_mass']) else "- kg")
-    col4.metric("Masa kości", f"{latest['bone_mass']:.2f} kg" if pd.notna(latest.get('bone_mass')) else "- kg")
+    col2.metric("Tłuszcz", f"{latest['fat_mass']:.2f} kg ({latest['fat_mass_pct']}%)" if pd.notna(latest['fat_mass']) else "-")
+    col3.metric("Mięśnie", f"{latest['muscle_mass']:.2f} kg ({latest['muscle_mass_pct']}%)" if pd.notna(latest['muscle_mass']) else "-")
+    col4.metric("Kości", f"{latest['bone_mass']:.2f} kg ({latest['bone_mass_pct']}%)" if pd.notna(latest.get('bone_mass')) else "-")
 
     st.markdown("---")
     st.subheader("🤖 Analiza ekspercka AI (Gemini)")
@@ -226,8 +235,11 @@ else:
             st.error("Brak skonfigurowanego klucza GEMINI_API_KEY w Secrets Streamlit.")
         else:
             with st.spinner("Gemini analizuje dane..."):
-                history_text = "\n".join([f"Data: {r['date']} | Waga: {r['weight']:.2f} kg | Tłuszcz: {r.get('fat_mass', '-')} kg | Mięśnie: {r.get('muscle_mass', '-')} kg | Kości: {r.get('bone_mass', '-')} kg" for _, r in df.tail(14).iterrows()])
-                prompt = f"Oceń surowe dane pomiarowe z ostatnich 2 tygodni, uwzględniając pełny skład ciała, odrzuć szumy i wskaż twardy trend:\n{history_text}"
+                history_text = "\n".join([
+                    f"Data: {r['date']} | Waga: {r['weight']:.2f} kg | Tłuszcz: {r.get('fat_mass', '-')} kg ({r.get('fat_mass_pct', '-') }%) | Mięśnie: {r.get('muscle_mass', '-')} kg ({r.get('muscle_mass_pct', '-') }%) | Kości: {r.get('bone_mass', '-')} kg" 
+                    for _, r in df.tail(14).iterrows()
+                ])
+                prompt = f"Oceń surowe dane pomiarowe z ostatnich 2 tygodni, uwzględniając pełny skład ciała (waga, tłuszcz kg/%, mięśnie kg/%, kości), odrzuć szumy i wskaż twardy trend:\n{history_text}"
                 
                 gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
                 res = requests.post(gemini_url, headers={"Content-Type": "application/json"}, json={"contents": [{"parts": [{"text": prompt}]}]})
@@ -240,11 +252,18 @@ else:
                     st.error(f"Błąd API Gemini: {res.text}")
 
     with st.expander("Pełna historia pomiarów"):
-        history_table = df.sort_values(by='date', ascending=False)[['date', 'weight', 'fat_mass', 'muscle_mass', 'hydration', 'bone_mass']]
+        history_table = df.sort_values(by='date', ascending=False)[[
+            'date', 'weight', 'fat_mass', 'fat_mass_pct', 
+            'muscle_mass', 'muscle_mass_pct', 'hydration', 'hydration_pct', 'bone_mass', 'bone_mass_pct'
+        ]]
         st.dataframe(history_table.style.format({
             'weight': '{:.2f}',
             'fat_mass': lambda x: f"{x:.2f}" if pd.notna(x) else '-',
+            'fat_mass_pct': lambda x: f"{x:.1f}%" if pd.notna(x) else '-',
             'muscle_mass': lambda x: f"{x:.2f}" if pd.notna(x) else '-',
+            'muscle_mass_pct': lambda x: f"{x:.1f}%" if pd.notna(x) else '-',
             'hydration': lambda x: f"{x:.2f}" if pd.notna(x) else '-',
-            'bone_mass': lambda x: f"{x:.2f}" if pd.notna(x) else '-'
+            'hydration_pct': lambda x: f"{x:.1f}%" if pd.notna(x) else '-',
+            'bone_mass': lambda x: f"{x:.2f}" if pd.notna(x) else '-',
+            'bone_mass_pct': lambda x: f"{x:.1f}%" if pd.notna(x) else '-'
         }), use_container_width=True)
