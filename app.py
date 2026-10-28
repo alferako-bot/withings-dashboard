@@ -8,7 +8,7 @@ DB_FILE = "measurements.db"
 # Klucz API do Gemini weźmiemy bezpiecznie ze Streamlit Secrets
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY", ""))
 
-st.set_page_title(page_title="Withings AI Dashboard", page_icon="📊", layout="centered")
+st.set_page_config(page_title="Withings AI Dashboard", page_icon="📊", layout="centered")
 
 st.title("⚖️ Withings Body Smart & AI Dashboard")
 st.markdown("Panel analityczny działający w chmurze Streamlit.")
