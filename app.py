@@ -184,3 +184,23 @@ else:
 
     with st.expander("Pełna historia pomiarów"):
         st.dataframe(df.sort_values(by='date', ascending=False))
+
+# --- TYMCZASOWY POMOCNIK DO WYMIANY KODU ---
+st.divider()
+st.subheader("🛠️ Panel pomocniczy: Generowanie Refresh Tokena")
+temp_code = st.text_input("Wklej kod z paska adresu (to po code=):")
+if st.button("Wygeneruj Refresh Token"):
+    if temp_code:
+        token_url = "https://wbsapi.withings.net/v2/oauth2"
+        token_payload = {
+            "action": "requesttoken",
+            "grant_type": "authorization_code",
+            "client_id": WITHINGS_CLIENT_ID,
+            "client_secret": WITHINGS_CLIENT_SECRET,
+            "code": temp_code.strip(),
+            "redirect_uri": "http://127.0.0.1"
+        }
+        r = requests.post(token_url, data=token_payload)
+        st.json(r.json())
+    else:
+        st.warning("Najpierw wklej kod!")
