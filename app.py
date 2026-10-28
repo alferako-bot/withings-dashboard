@@ -38,7 +38,7 @@ def init_db():
 init_db()
 
 def get_withings_access_token():
-    url = "https://wba.withings.com/v2/oauth2"
+    url = "https://wbsapi.withings.net/v2/oauth2"
     payload = {
         "action": "requesttoken",
         "grant_type": "refresh_token",
