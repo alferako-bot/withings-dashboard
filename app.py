@@ -49,10 +49,14 @@ def get_withings_access_token():
     try:
         response = requests.post(url, data=payload)
         data = response.json()
+        
+        # Wyświetlimy status i odpowiedź w razie błędu
         if data.get("status") == 0:
             return data["body"].get("access_token")
+        else:
+            st.error(f"Szczegóły błędu Withings API: {data}")
     except Exception as e:
-        st.error(f"Błąd połączenia z Withings przy odświeżaniu tokena: {e}")
+        st.error(f"Błąd krytyczny połączenia z Withings: {e}")
     return None
 
 def fetch_withings_data():
