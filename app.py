@@ -83,7 +83,6 @@ def fetch_withings_data():
             
             for group in measuregrps:
                 ts = group.get("date")
-                # Konwersja czasu na strefę Europe/Warsaw i format bez sekund (RRRR-MM-DD HH:MM)
                 dt_utc = pd.to_datetime(ts, unit='s', utc=True)
                 dt_local = dt_utc.tz_convert('Europe/Warsaw')
                 date_str = dt_local.strftime('%Y-%m-%d %H:%M')
@@ -137,7 +136,11 @@ def load_data():
     df = pd.read_sql_query("SELECT timestamp, date, weight, fat_mass, muscle_mass, hydration FROM measurements ORDER BY timestamp ASC", conn)
     conn.close()
     if not df.empty:
-        df['datetime'] = pd.to_datetime(df['date'])
+        # Zawsze przeliczamy na podstawie timestamp, aby zagwarantować poprawną strefę i format dla starych i nowych wpisów
+        dt_utc = pd.to_datetime(df['timestamp'], unit='s', utc=True)
+        dt_local = dt_utc.tz_convert('Europe/Warsaw')
+        df['datetime'] = dt_local
+        df['date'] = dt_local.strftime('%Y-%m-%d %H:%M')
     return df
 
 df = load_data()
@@ -162,8 +165,8 @@ else:
     latest = df.iloc[-1]
     col1, col2, col3 = st.columns(3)
     col1.metric("Ostatnia waga", f"{latest['weight']:.2f} kg")
-    col2.metric("Masa tłuszczowa", f"{latest['fat_mass'] if pd.notna(latest['fat_mass']) else '-'} kg")
-    col3.metric("Masa mięśniowa", f"{latest['muscle_mass'] if pd.notna(latest['muscle_mass']) else '-'} kg")
+    col2.metric("Masa tłuszczowa", f"{latest['fat_mass']:.2f} kg" if pd.notna(latest['fat_mass']) else "- kg")
+    col3.metric("Masa mięśniowa", f"{latest['muscle_mass']:.2f} kg" if pd.notna(latest['muscle_mass']) else "- kg")
 
     st.markdown("---")
     st.subheader("🤖 Analiza ekspercka AI (Gemini)")
