@@ -94,17 +94,22 @@ def fetch_withings_data():
                 for meas in group.get("measures", []):
                     val = meas.get("value") * (10 ** meas.get("unit"))
                     m_type = meas.get("type")
+                    
+                    # Rozszerzone mapowanie typów Withings API
                     if m_type == 1:
                         weight = round(val, 2)
-                    elif m_type == 6:
-                        fat_mass = round(val, 2)
-                    elif m_type in [76, 88]:
+                    elif m_type in [6, 8]:  # 6: Masa tłuszczowa / 8: woda (w niektórych wersjach)
+                        if m_type == 6:
+                            fat_mass = round(val, 2)
+                    elif m_type == 76 or m_type == 88 or m_type == 7: 
                         muscle_mass = round(val, 2)
-                    elif m_type == 8:
+                    elif m_type == 8 or m_type == 77:
                         hydration = round(val, 2)
+                    elif m_type == 5:
+                        # Masa beztłuszczowa lub alternatywny tłuszcz
+                        pass
                 
                 if weight is not None:
-                    # Sprawdzamy czy wpis istnieje
                     cursor.execute("SELECT id, fat_mass, muscle_mass, hydration FROM measurements WHERE timestamp = ?", (ts,))
                     row = cursor.fetchone()
                     
@@ -115,7 +120,6 @@ def fetch_withings_data():
                         ''', (ts, date_str, weight, fat_mass, muscle_mass, hydration))
                         updated_count += 1
                     else:
-                        # Zawsze aktualizujemy, żeby nadpisać ewentualne None nowymi danymi z API
                         cursor.execute('''
                             UPDATE measurements 
                             SET weight = ?,
@@ -221,9 +225,23 @@ else:
         }), use_container_width=True)
 
     # --- PANEL DIAGNOSTYCZNY API ---
-    with st.expander("🔍 Diagnostyka: Surowy JSON z Withings API"):
-        if st.button("Pobierz surowe dane z Withings"):
+    with st.expander("🔍 Diagnostyka: Analiza typów pomiarów z Withings"):
+        if st.button("Pokaż typy (m_type) z ostatniego pomiaru"):
             access_token = get_withings_access_token()
             if access_token:
                 debug_res = requests.post("https://wbsapi.withings.net/measure", data={"action": "getmeas", "access_token": access_token})
-                st.json(debug_res.json())
+                res_json = debug_res.json()
+                if res_json.get("status") == 0:
+                    grps = res_json.get("body", {}).get("measuregrps", [])
+                    if grps:
+                        latest_grp = grps[-1]
+                        st.write("Wszystkie metryki w najnowszym wpisie pomiarowym:")
+                        parsed_measures = []
+                        for m in latest_grp.get("measures", []):
+                            val = m.get("value") * (10 ** m.get("unit"))
+                            parsed_measures.append({"type": m.get("type"), "value": val})
+                        st.json(parsed_measures)
+                    else:
+                        st.warning("Brak grup pomiarowych.")
+                else:
+                    st.error(f"Błąd API: {res_json}")
