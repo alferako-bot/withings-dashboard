@@ -65,7 +65,6 @@ def fetch_withings_data():
         return 0
 
     url = "https://wbsapi.withings.net/measure"
-    # Usunięto meastype=1, aby API zwróciło wszystkie dostępne metryki dla pomiarów
     payload = {
         "action": "getmeas",
         "access_token": access_token
@@ -79,7 +78,7 @@ def fetch_withings_data():
             measuregrps = data.get("body", {}).get("measuregrps", [])
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
-            added_count = 0
+            updated_count = 0
             
             for group in measuregrps:
                 ts = group.get("date")
@@ -99,13 +98,13 @@ def fetch_withings_data():
                         weight = round(val, 2)
                     elif m_type == 6:
                         fat_mass = round(val, 2)
-                    elif m_type in [76, 88]:  # 76 lub 88 to masa mięśniowa w Withings
+                    elif m_type in [76, 88]:
                         muscle_mass = round(val, 2)
                     elif m_type == 8:
                         hydration = round(val, 2)
                 
                 if weight is not None:
-                    # Sprawdzamy, czy pomiar już istnieje, a jeśli tak – uzupełniamy brakujące składniki ciała
+                    # Sprawdzamy czy wpis istnieje
                     cursor.execute("SELECT id, fat_mass, muscle_mass, hydration FROM measurements WHERE timestamp = ?", (ts,))
                     row = cursor.fetchone()
                     
@@ -114,38 +113,35 @@ def fetch_withings_data():
                             INSERT INTO measurements (timestamp, date, weight, fat_mass, muscle_mass, hydration)
                             VALUES (?, ?, ?, ?, ?, ?)
                         ''', (ts, date_str, weight, fat_mass, muscle_mass, hydration))
-                        added_count += 1
+                        updated_count += 1
                     else:
-                        # Aktualizacja, jeśli w bazie były wartości None, a teraz API je zwróciło
-                        db_id, db_fat, db_muscle, db_hyd = row
-                        if (fat_mass is not None and db_fat is None) or \
-                           (muscle_mass is not None and db_muscle is None) or \
-                           (hydration is not None and db_hyd is None):
-                            cursor.execute('''
-                                UPDATE measurements 
-                                SET fat_mass = COALESCE(?, fat_mass),
-                                    muscle_mass = COALESCE(?, muscle_mass),
-                                    hydration = COALESCE(?, hydration)
-                                WHERE timestamp = ?
-                            ''', (fat_mass, muscle_mass, hydration, ts))
-                            added_count += 1
+                        # Zawsze aktualizujemy, żeby nadpisać ewentualne None nowymi danymi z API
+                        cursor.execute('''
+                            UPDATE measurements 
+                            SET weight = ?,
+                                fat_mass = COALESCE(?, fat_mass),
+                                muscle_mass = COALESCE(?, muscle_mass),
+                                hydration = COALESCE(?, hydration)
+                            WHERE timestamp = ?
+                        ''', (weight, fat_mass, muscle_mass, hydration, ts))
+                        updated_count += 1
                         
             conn.commit()
             conn.close()
-            return added_count
+            return updated_count
     except Exception as e:
         st.error(f"Błąd podczas pobierania pomiarów: {e}")
     return 0
 
 # Przycisk synchronizacji w interfejsie
 if st.button("🔄 Synchronizuj dane z Withings"):
-    with st.spinner("Pobieram najnowsze pomiary z wagi i składu ciała..."):
-        new_records = fetch_withings_data()
-        if new_records > 0:
-            st.success(f"Pomyślnie zsynchronizowano! Zaktualizowano/dodano wpisów: {new_records}")
+    with st.spinner("Pobieram najnowsze pomiary i skład ciała..."):
+        count = fetch_withings_data()
+        if count > 0:
+            st.success(f"Pomyślnie zsynchronizowano i zaktualizowano wpisy: {count}")
             st.rerun()
         else:
-            st.info("Brak nowych pomiarów do pobrania lub dane są aktualne.")
+            st.info("Brak nowych danych do zsynchronizowania.")
 
 def load_data():
     if not os.path.exists(DB_FILE):
@@ -203,7 +199,7 @@ else:
         else:
             with st.spinner("Gemini analizuje dane..."):
                 history_text = "\n".join([f"Data: {r['date']} | Waga: {r['weight']:.2f} kg | Tłuszcz: {r.get('fat_mass', '-')} kg | Mięśnie: {r.get('muscle_mass', '-')} kg" for _, r in df.tail(14).iterrows()])
-                prompt = f"Oceń surowe dane pomiarowe z ostatnich 2 tygodni, uwzględniając skład ciała (waga, tłuszcz, mięśnie), odrzuć szumy i wskaż twardy trend:\n{history_text}"
+                prompt = f"Oceń surowe dane pomiarowe z ostatnich 2 tygodni, uwzględniając skład ciała, odrzuć szumy i wskaż twardy trend:\n{history_text}"
                 
                 gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
                 res = requests.post(gemini_url, headers={"Content-Type": "application/json"}, json={"contents": [{"parts": [{"text": prompt}]}]})
@@ -223,3 +219,11 @@ else:
             'muscle_mass': lambda x: f"{x:.2f}" if pd.notna(x) else '-',
             'hydration': lambda x: f"{x:.2f}" if pd.notna(x) else '-'
         }), use_container_width=True)
+
+    # --- PANEL DIAGNOSTYCZNY API ---
+    with st.expander("🔍 Diagnostyka: Surowy JSON z Withings API"):
+        if st.button("Pobierz surowe dane z Withings"):
+            access_token = get_withings_access_token()
+            if access_token:
+                debug_res = requests.post("https://wbsapi.withings.net/measure", data={"action": "getmeas", "access_token": access_token})
+                st.json(debug_res.json())
