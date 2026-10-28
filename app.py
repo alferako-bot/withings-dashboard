@@ -141,7 +141,6 @@ def load_data():
         df['datetime'] = dt_local
         df['date'] = dt_local.dt.strftime('%Y-%m-%d %H:%M')
         
-        # Zaokrąglenie wartości numerycznych do 2 miejsc po przecinku
         df['weight'] = df['weight'].round(2)
         if 'fat_mass' in df.columns:
             df['fat_mass'] = df['fat_mass'].round(2)
@@ -168,7 +167,6 @@ if df.empty:
         st.rerun()
 else:
     st.subheader("📈 Trendy wagi i składu ciała")
-    # Używamy kolumny 'date' (sformatowany tekst bez sekund) jako indeksu wykresu
     chart_data = df.set_index('date')[['weight']]
     st.line_chart(chart_data)
     
@@ -200,9 +198,11 @@ else:
                     st.error(f"Błąd API Gemini: {res.text}")
 
     with st.expander("Pełna historia pomiarów"):
-        st.dataframe(df.sort_values(by='date', ascending=False).style.format({
+        # Wybieramy tylko potrzebne kolumny bez technicznego timestamp i datetime
+        history_table = df.sort_values(by='date', ascending=False)[['date', 'weight', 'fat_mass', 'muscle_mass', 'hydration']]
+        st.dataframe(history_table.style.format({
             'weight': '{:.2f}',
             'fat_mass': lambda x: f"{x:.2f}" if pd.notna(x) else '-',
             'muscle_mass': lambda x: f"{x:.2f}" if pd.notna(x) else '-',
             'hydration': lambda x: f"{x:.2f}" if pd.notna(x) else '-'
-        }))
+        }), use_container_width=True)
