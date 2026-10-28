@@ -50,7 +50,6 @@ def get_withings_access_token():
         response = requests.post(url, data=payload)
         data = response.json()
         
-        # Wyświetlimy status i odpowiedź w razie błędu
         if data.get("status") == 0:
             return data["body"].get("access_token")
         else:
@@ -84,7 +83,10 @@ def fetch_withings_data():
             
             for group in measuregrps:
                 ts = group.get("date")
-                date_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))
+                # Konwersja czasu na strefę Europe/Warsaw i format bez sekund (RRRR-MM-DD HH:MM)
+                dt_utc = pd.to_datetime(ts, unit='s', utc=True)
+                dt_local = dt_utc.tz_convert('Europe/Warsaw')
+                date_str = dt_local.strftime('%Y-%m-%d %H:%M')
                 
                 weight = None
                 fat_mass = None
@@ -95,15 +97,15 @@ def fetch_withings_data():
                     val = meas.get("value") * (10 ** meas.get("unit"))
                     m_type = meas.get("type")
                     if m_type == 1:
-                        weight = val
+                        weight = round(val, 2)
                     elif m_type == 6:
-                        fat_mass = val
+                        fat_mass = round(val, 2)
                     elif m_type == 76:
-                        muscle_mass = val
+                        muscle_mass = round(val, 2)
                     elif m_type == 8:
-                        hydration = val
+                        hydration = round(val, 2)
                 
-                if weight:
+                if weight is not None:
                     cursor.execute('''
                         INSERT OR IGNORE INTO measurements (timestamp, date, weight, fat_mass, muscle_mass, hydration)
                         VALUES (?, ?, ?, ?, ?, ?)
@@ -146,7 +148,9 @@ if df.empty:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         now = int(time.time())
-        cursor.execute("INSERT OR IGNORE INTO measurements (timestamp, date, weight, fat_mass, muscle_mass, hydration) VALUES (?, datetime('now'), ?, ?, ?, ?)", (now, 74.5, 18.2, 35.5, 55.0))
+        dt_local = pd.to_datetime(now, unit='s', utc=True).tz_convert('Europe/Warsaw')
+        test_date_str = dt_local.strftime('%Y-%m-%d %H:%M')
+        cursor.execute("INSERT OR IGNORE INTO measurements (timestamp, date, weight, fat_mass, muscle_mass, hydration) VALUES (?, ?, ?, ?, ?, ?)", (now, test_date_str, 74.50, 18.20, 35.50, 55.00))
         conn.commit()
         conn.close()
         st.rerun()
@@ -157,7 +161,7 @@ else:
     
     latest = df.iloc[-1]
     col1, col2, col3 = st.columns(3)
-    col1.metric("Ostatnia waga", f"{latest['weight']} kg")
+    col1.metric("Ostatnia waga", f"{latest['weight']:.2f} kg")
     col2.metric("Masa tłuszczowa", f"{latest['fat_mass'] if pd.notna(latest['fat_mass']) else '-'} kg")
     col3.metric("Masa mięśniowa", f"{latest['muscle_mass'] if pd.notna(latest['muscle_mass']) else '-'} kg")
 
@@ -169,7 +173,7 @@ else:
             st.error("Brak skonfigurowanego klucza GEMINI_API_KEY w Secrets Streamlit.")
         else:
             with st.spinner("Gemini analizuje dane..."):
-                history_text = "\n".join([f"Data: {r['date']} | Waga: {r['weight']} kg" for _, r in df.tail(14).iterrows()])
+                history_text = "\n".join([f"Data: {r['date']} | Waga: {r['weight']:.2f} kg" for _, r in df.tail(14).iterrows()])
                 prompt = f"Oceń surowe dane pomiarowe z ostatnich 2 tygodni, odrzuć szumy i wskaż twardy trend:\n{history_text}"
                 
                 gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
@@ -183,5 +187,9 @@ else:
                     st.error(f"Błąd API Gemini: {res.text}")
 
     with st.expander("Pełna historia pomiarów"):
-        st.dataframe(df.sort_values(by='date', ascending=False))
-
+        st.dataframe(df.sort_values(by='date', ascending=False).style.format({
+            'weight': '{:.2f}',
+            'fat_mass': lambda x: f"{x:.2f}" if pd.notna(x) else '-',
+            'muscle_mass': lambda x: f"{x:.2f}" if pd.notna(x) else '-',
+            'hydration': lambda x: f"{x:.2f}" if pd.notna(x) else '-'
+        }))
