@@ -136,11 +136,20 @@ def load_data():
     df = pd.read_sql_query("SELECT timestamp, date, weight, fat_mass, muscle_mass, hydration FROM measurements ORDER BY timestamp ASC", conn)
     conn.close()
     if not df.empty:
-        # Poprawiono użycie akcesora .dt dla obiektów typu Series w Pandas
         dt_utc = pd.to_datetime(df['timestamp'], unit='s', utc=True)
         dt_local = dt_utc.dt.tz_convert('Europe/Warsaw')
         df['datetime'] = dt_local
         df['date'] = dt_local.dt.strftime('%Y-%m-%d %H:%M')
+        
+        # Zaokrąglenie wartości numerycznych do 2 miejsc po przecinku
+        df['weight'] = df['weight'].round(2)
+        if 'fat_mass' in df.columns:
+            df['fat_mass'] = df['fat_mass'].round(2)
+        if 'muscle_mass' in df.columns:
+            df['muscle_mass'] = df['muscle_mass'].round(2)
+        if 'hydration' in df.columns:
+            df['hydration'] = df['hydration'].round(2)
+            
     return df
 
 df = load_data()
@@ -159,7 +168,8 @@ if df.empty:
         st.rerun()
 else:
     st.subheader("📈 Trendy wagi i składu ciała")
-    chart_data = df.set_index('datetime')[['weight']]
+    # Używamy kolumny 'date' (sformatowany tekst bez sekund) jako indeksu wykresu
+    chart_data = df.set_index('date')[['weight']]
     st.line_chart(chart_data)
     
     latest = df.iloc[-1]
